@@ -1,14 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
-import ReactMarkdown from 'react-markdown';
-import Stage1 from './Stage1';
-import Stage2 from './Stage2';
-import Stage3 from './Stage3';
+import Comment from './Comment';
+import { api } from '../api';
 import './ChatInterface.css';
 
 export default function ChatInterface({
   conversation,
   onSendMessage,
   isLoading,
+  onReply,
 }) {
   const [input, setInput] = useState('');
   const messagesEndRef = useRef(null);
@@ -30,10 +29,19 @@ export default function ChatInterface({
   };
 
   const handleKeyDown = (e) => {
-    // Submit on Enter (without Shift)
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSubmit(e);
+    }
+  };
+
+  const handleReply = async (content, persona) => {
+    if (!conversation?.id) return;
+    try {
+      await api.sendReply(conversation.id, content, persona);
+      if (onReply) onReply();
+    } catch (error) {
+      console.error("Failed to send reply:", error);
     }
   };
 
@@ -41,105 +49,142 @@ export default function ChatInterface({
     return (
       <div className="chat-interface">
         <div className="empty-state">
-          <h2>Welcome to LLM Council</h2>
-          <p>Create a new conversation to get started</p>
+          <h2>Welcome to LLM Hydra</h2>
+          <p>Ask a question to summon the Council.</p>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="chat-interface">
+    <div className="chat-interface forum-view">
       <div className="messages-container">
         {conversation.messages.length === 0 ? (
           <div className="empty-state">
-            <h2>Start a conversation</h2>
-            <p>Ask a question to consult the LLM Council</p>
+            <h2>Start a Discussion</h2>
+            <p>Ask a question. The Chairman will assemble a team of experts.</p>
           </div>
         ) : (
-          conversation.messages.map((msg, index) => (
-            <div key={index} className="message-group">
-              {msg.role === 'user' ? (
-                <div className="user-message">
-                  <div className="message-label">You</div>
-                  <div className="message-content">
-                    <div className="markdown-content">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="assistant-message">
-                  <div className="message-label">LLM Council</div>
+          <>
+            {/* Render first user message as Thread Starter (OP) */}
+            {conversation.messages[0] && conversation.messages[0].role === 'user' && (
+              <div className="thread-starter">
+                <Comment
+                  author="You"
+                  icon="👤"
+                  content={conversation.messages[0].content}
+                  isOp={true}
+                  votes={1}
+                />
+              </div>
+            )}
 
-                  {/* Stage 1 */}
-                  {msg.loading?.stage1 && (
-                    <div className="stage-loading">
-                      <div className="spinner"></div>
-                      <span>Running Stage 1: Collecting individual responses...</span>
-                    </div>
-                  )}
-                  {msg.stage1 && <Stage1 responses={msg.stage1} />}
+            {/* Render all subsequent messages as comments */}
+            {conversation.messages.slice(1).map((msg, index) => {
+              const actualIndex = index + 1; // Adjust index since we sliced
 
-                  {/* Stage 2 */}
-                  {msg.loading?.stage2 && (
-                    <div className="stage-loading">
-                      <div className="spinner"></div>
-                      <span>Running Stage 2: Peer rankings...</span>
-                    </div>
-                  )}
-                  {msg.stage2 && (
-                    <Stage2
-                      rankings={msg.stage2}
-                      labelToModel={msg.metadata?.label_to_model}
-                      aggregateRankings={msg.metadata?.aggregate_rankings}
+              if (msg.role === 'user') {
+                // User replies appear as regular comments
+                return (
+                  <div key={actualIndex} className="thread-comments">
+                    <Comment
+                      author="You"
+                      icon="👤"
+                      content={msg.content}
+                      isOp={true}
+                      votes={1}
                     />
-                  )}
+                  </div>
+                );
+              } else if (msg.role === 'assistant') {
+                // Assistant message containing stages
+                return (
+                  <div key={actualIndex} className="thread-comments">
+                    {/* Loading State for Personas */}
+                    {msg.loading?.stage1 && !msg.stage1 && (
+                      <div className="loading-status">
+                        <div className="spinner"></div>
+                        <span>The Chairman is assembling the council...</span>
+                      </div>
+                    )}
 
-                  {/* Stage 3 */}
-                  {msg.loading?.stage3 && (
-                    <div className="stage-loading">
-                      <div className="spinner"></div>
-                      <span>Running Stage 3: Final synthesis...</span>
-                    </div>
-                  )}
-                  {msg.stage3 && <Stage3 finalResponse={msg.stage3} />}
-                </div>
-              )}
-            </div>
-          ))
+                    {/* Stage 3: Chairman's Synthesis (Pinned) */}
+                    {msg.stage3 && (
+                      <div className="pinned-comment">
+                        <div className="pinned-label">📌 Pinned by Moderators</div>
+                        <Comment
+                          author={msg.stage3.model}
+                          role="Chairman"
+                          icon="⚖️"
+                          content={msg.stage3.response}
+                          isMod={true}
+                          votes={100}
+                        />
+                      </div>
+                    )}
+
+                    {/* Stage 1: Expert Responses */}
+                    {msg.stage1 && msg.stage1.map((resp, i) => (
+                      <Comment
+                        key={i}
+                        author={resp.persona_name || resp.model}
+                        role={resp.persona_role}
+                        icon={resp.persona_icon}
+                        content={resp.response}
+                        votes={Math.floor(Math.random() * 20) + 5}
+                        onReply={(content) => handleReply(content, {
+                          name: resp.persona_name,
+                          role: resp.persona_role,
+                          icon: resp.persona_icon,
+                          model: resp.model,
+                          system_prompt: resp.system_prompt || ""
+                        })}
+                        persona={{
+                          name: resp.persona_name,
+                          role: resp.persona_role,
+                          icon: resp.persona_icon,
+                          model: resp.model,
+                          system_prompt: resp.system_prompt || ""
+                        }}
+                      />
+                    ))}
+                  </div>
+                );
+              }
+              return null;
+            })}
+          </>
         )}
 
         {isLoading && (
           <div className="loading-indicator">
             <div className="spinner"></div>
-            <span>Consulting the council...</span>
+            <span>Processing...</span>
           </div>
         )}
 
         <div ref={messagesEndRef} />
       </div>
 
-      {conversation.messages.length === 0 && (
-        <form className="input-form" onSubmit={handleSubmit}>
-          <textarea
-            className="message-input"
-            placeholder="Ask your question... (Shift+Enter for new line, Enter to send)"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            onKeyDown={handleKeyDown}
-            disabled={isLoading}
-            rows={3}
-          />
-          <button
-            type="submit"
-            className="send-button"
-            disabled={!input.trim() || isLoading}
-          >
-            Send
-          </button>
-        </form>
-      )}
+      {/* Input Area */}
+      <form className="input-form" onSubmit={handleSubmit}>
+        <textarea
+          className="message-input"
+          placeholder="Ask a question to start a thread..."
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          onKeyDown={handleKeyDown}
+          disabled={isLoading}
+          rows={3}
+        />
+        <button
+          type="submit"
+          className="send-button"
+          disabled={!input.trim() || isLoading}
+        >
+          Post
+        </button>
+      </form>
     </div>
   );
 }
