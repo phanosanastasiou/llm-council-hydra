@@ -6,6 +6,17 @@ const API_BASE = 'http://localhost:8001';
 
 export const api = {
   /**
+   * List all available personas.
+   */
+  async listPersonas() {
+    const response = await fetch(`${API_BASE}/api/personas`);
+    if (!response.ok) {
+      throw new Error('Failed to list personas');
+    }
+    return response.json();
+  },
+
+  /**
    * List all conversations.
    */
   async listConversations() {
@@ -49,7 +60,7 @@ export const api = {
   /**
    * Send a message in a conversation.
    */
-  async sendMessage(conversationId, content) {
+  async sendMessage(conversationId, content, personaIds = null) {
     const response = await fetch(
       `${API_BASE}/api/conversations/${conversationId}/message`,
       {
@@ -57,7 +68,7 @@ export const api = {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, persona_ids: personaIds }),
       }
     );
     if (!response.ok) {
@@ -70,10 +81,17 @@ export const api = {
    * Send a message and receive streaming updates.
    * @param {string} conversationId - The conversation ID
    * @param {string} content - The message content
+   * @param {Array<string>} personaIds - List of selected persona IDs
    * @param {function} onEvent - Callback function for each event: (eventType, data) => void
    * @returns {Promise<void>}
    */
-  async sendMessageStream(conversationId, content, onEvent) {
+  async sendMessageStream(conversationId, content, personaIds, onEvent) {
+    // Handle optional personaIds argument
+    if (typeof personaIds === 'function') {
+      onEvent = personaIds;
+      personaIds = null;
+    }
+
     const response = await fetch(
       `${API_BASE}/api/conversations/${conversationId}/message/stream`,
       {
@@ -81,7 +99,7 @@ export const api = {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ content }),
+        body: JSON.stringify({ content, persona_ids: personaIds }),
       }
     );
 
@@ -111,5 +129,31 @@ export const api = {
         }
       }
     }
+  },
+
+  /**
+   * Send a reply to a specific persona
+   * @param {string} conversationId - The conversation ID
+   * @param {string} content - The reply content
+   * @param {Object} persona - The persona object to reply to
+   * @returns {Promise<Object>} - The reply data
+   */
+  async sendReply(conversationId, content, persona) {
+    const response = await fetch(
+      `${API_BASE}/api/conversations/${conversationId}/reply`,
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ content, persona }),
+      }
+    );
+
+    if (!response.ok) {
+      throw new Error('Failed to send reply');
+    }
+
+    return response.json();
   },
 };

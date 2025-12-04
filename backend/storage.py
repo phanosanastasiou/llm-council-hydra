@@ -129,6 +129,7 @@ def add_user_message(conversation_id: str, content: str):
 
 def add_assistant_message(
     conversation_id: str,
+    personas: List[Dict[str, Any]],
     stage1: List[Dict[str, Any]],
     stage2: List[Dict[str, Any]],
     stage3: Dict[str, Any]
@@ -138,6 +139,7 @@ def add_assistant_message(
 
     Args:
         conversation_id: Conversation identifier
+        personas: List of generated personas for this response
         stage1: List of individual model responses
         stage2: List of model rankings
         stage3: Final synthesized response
@@ -148,6 +150,7 @@ def add_assistant_message(
 
     conversation["messages"].append({
         "role": "assistant",
+        "personas": personas,
         "stage1": stage1,
         "stage2": stage2,
         "stage3": stage3

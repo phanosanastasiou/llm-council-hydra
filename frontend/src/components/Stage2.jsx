@@ -6,10 +6,11 @@ function deAnonymizeText(text, labelToModel) {
   if (!labelToModel) return text;
 
   let result = text;
-  // Replace each "Response X" with the actual model name
-  Object.entries(labelToModel).forEach(([label, model]) => {
-    const modelShortName = model.split('/')[1] || model;
-    result = result.replace(new RegExp(label, 'g'), `**${modelShortName}**`);
+  // Replace each "Response X" with the actual persona name
+  Object.entries(labelToModel).forEach(([label, personaName]) => {
+    // If it's a model path (old way), split it. If it's a persona name, keep it.
+    const displayName = personaName.includes('/') ? personaName.split('/')[1] : personaName;
+    result = result.replace(new RegExp(label, 'g'), `**${displayName}**`);
   });
   return result;
 }
@@ -27,8 +28,8 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings }) {
 
       <h4>Raw Evaluations</h4>
       <p className="stage-description">
-        Each model evaluated all responses (anonymized as Response A, B, C, etc.) and provided rankings.
-        Below, model names are shown in <strong>bold</strong> for readability, but the original evaluation used anonymous labels.
+        Each expert evaluated all responses (anonymized as Response A, B, C, etc.) and provided rankings.
+        Below, persona names are shown in <strong>bold</strong> for readability, but the original evaluation used anonymous labels.
       </p>
 
       <div className="tabs">
@@ -38,7 +39,7 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings }) {
             className={`tab ${activeTab === index ? 'active' : ''}`}
             onClick={() => setActiveTab(index)}
           >
-            {rank.model.split('/')[1] || rank.model}
+            {rank.model.includes('/') ? rank.model.split('/')[1] : rank.model}
           </button>
         ))}
       </div>
@@ -54,25 +55,25 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings }) {
         </div>
 
         {rankings[activeTab].parsed_ranking &&
-         rankings[activeTab].parsed_ranking.length > 0 && (
-          <div className="parsed-ranking">
-            <strong>Extracted Ranking:</strong>
-            <ol>
-              {rankings[activeTab].parsed_ranking.map((label, i) => (
-                <li key={i}>
-                  {labelToModel && labelToModel[label]
-                    ? labelToModel[label].split('/')[1] || labelToModel[label]
-                    : label}
-                </li>
-              ))}
-            </ol>
-          </div>
-        )}
+          rankings[activeTab].parsed_ranking.length > 0 && (
+            <div className="parsed-ranking">
+              <strong>Extracted Ranking:</strong>
+              <ol>
+                {rankings[activeTab].parsed_ranking.map((label, i) => (
+                  <li key={i}>
+                    {labelToModel && labelToModel[label]
+                      ? (labelToModel[label].includes('/') ? labelToModel[label].split('/')[1] : labelToModel[label])
+                      : label}
+                  </li>
+                ))}
+              </ol>
+            </div>
+          )}
       </div>
 
       {aggregateRankings && aggregateRankings.length > 0 && (
         <div className="aggregate-rankings">
-          <h4>Aggregate Rankings (Street Cred)</h4>
+          <h4>Aggregate Rankings (Consensus)</h4>
           <p className="stage-description">
             Combined results across all peer evaluations (lower score is better):
           </p>
@@ -81,7 +82,7 @@ export default function Stage2({ rankings, labelToModel, aggregateRankings }) {
               <div key={index} className="aggregate-item">
                 <span className="rank-position">#{index + 1}</span>
                 <span className="rank-model">
-                  {agg.model.split('/')[1] || agg.model}
+                  {agg.model.includes('/') ? agg.model.split('/')[1] : agg.model}
                 </span>
                 <span className="rank-score">
                   Avg: {agg.average_rank.toFixed(2)}

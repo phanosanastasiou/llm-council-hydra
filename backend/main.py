@@ -4,13 +4,14 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import uuid
 import json
 import asyncio
 
 from . import storage
-from .council import run_full_council, generate_conversation_title, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings
+from .config import PERSONAS
+from .council import run_full_council, generate_conversation_title, stage1_collect_responses, stage2_collect_rankings, stage3_synthesize_final, calculate_aggregate_rankings, generate_direct_reply
 
 app = FastAPI(title="LLM Council API")
 
@@ -32,6 +33,7 @@ class CreateConversationRequest(BaseModel):
 class SendMessageRequest(BaseModel):
     """Request to send a message in a conversation."""
     content: str
+    persona_ids: Optional[List[str]] = None
 
 
 class ConversationMetadata(BaseModel):
@@ -40,6 +42,11 @@ class ConversationMetadata(BaseModel):
     created_at: str
     title: str
     message_count: int
+
+
+class ReplyRequest(BaseModel):
+    content: str
+    persona: Dict[str, Any]  # The full persona object to reply to
 
 
 class Conversation(BaseModel):
@@ -54,6 +61,12 @@ class Conversation(BaseModel):
 async def root():
     """Health check endpoint."""
     return {"status": "ok", "service": "LLM Council API"}
+
+
+@app.get("/api/personas")
+async def list_personas():
+    """List all available personas."""
+    return PERSONAS
 
 
 @app.get("/api/conversations", response_model=List[ConversationMetadata])
@@ -102,13 +115,14 @@ async def send_message(conversation_id: str, request: SendMessageRequest):
         storage.update_conversation_title(conversation_id, title)
 
     # Run the 3-stage council process
-    stage1_results, stage2_results, stage3_result, metadata = await run_full_council(
+    personas, stage1_results, stage2_results, stage3_result, metadata = await run_full_council(
         request.content
     )
 
     # Add assistant message with all stages
     storage.add_assistant_message(
         conversation_id,
+        personas,
         stage1_results,
         stage2_results,
         stage3_result
@@ -116,6 +130,7 @@ async def send_message(conversation_id: str, request: SendMessageRequest):
 
     # Return the complete response with metadata
     return {
+        "personas": personas,
         "stage1": stage1_results,
         "stage2": stage2_results,
         "stage3": stage3_result,
@@ -147,16 +162,22 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             if is_first_message:
                 title_task = asyncio.create_task(generate_conversation_title(request.content))
 
+            # Step 0: Generate Personas
+            yield f"data: {json.dumps({'type': 'personas_start'})}\n\n"
+            from .council import generate_dynamic_personas
+            personas = await generate_dynamic_personas(request.content)
+            yield f"data: {json.dumps({'type': 'personas_complete', 'data': personas})}\n\n"
+
             # Stage 1: Collect responses
             yield f"data: {json.dumps({'type': 'stage1_start'})}\n\n"
-            stage1_results = await stage1_collect_responses(request.content)
+            stage1_results = await stage1_collect_responses(request.content, personas)
             yield f"data: {json.dumps({'type': 'stage1_complete', 'data': stage1_results})}\n\n"
 
             # Stage 2: Collect rankings
             yield f"data: {json.dumps({'type': 'stage2_start'})}\n\n"
-            stage2_results, label_to_model = await stage2_collect_rankings(request.content, stage1_results)
-            aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_model)
-            yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_model, 'aggregate_rankings': aggregate_rankings}})}\n\n"
+            stage2_results, label_to_persona = await stage2_collect_rankings(request.content, stage1_results)
+            aggregate_rankings = calculate_aggregate_rankings(stage2_results, label_to_persona)
+            yield f"data: {json.dumps({'type': 'stage2_complete', 'data': stage2_results, 'metadata': {'label_to_model': label_to_persona, 'aggregate_rankings': aggregate_rankings}})}\n\n"
 
             # Stage 3: Synthesize final answer
             yield f"data: {json.dumps({'type': 'stage3_start'})}\n\n"
@@ -172,6 +193,7 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             # Save complete assistant message
             storage.add_assistant_message(
                 conversation_id,
+                personas,
                 stage1_results,
                 stage2_results,
                 stage3_result
@@ -192,6 +214,41 @@ async def send_message_stream(conversation_id: str, request: SendMessageRequest)
             "Connection": "keep-alive",
         }
     )
+
+
+@app.post("/api/conversations/{conversation_id}/reply")
+async def reply_to_message(conversation_id: str, request: ReplyRequest):
+    """
+    Reply directly to a specific persona/message.
+    """
+    conversation = storage.get_conversation(conversation_id)
+    if not conversation:
+        raise HTTPException(status_code=404, detail="Conversation not found")
+
+    # 1. Add User Message (The reply text)
+    storage.add_user_message(conversation_id, request.content)
+
+    # 2. Generate reply
+    # We need to re-fetch conversation to get the user message we just added included in history
+    conversation = storage.get_conversation(conversation_id)
+    
+    reply_data = await generate_direct_reply(
+        request.persona,
+        conversation["messages"],
+        request.content
+    )
+
+    # 3. Store the reply as a new assistant message
+    # We'll store it as a Stage 1 response type for consistency in UI rendering
+    storage.add_assistant_message(
+        conversation_id,
+        personas=[request.persona], # The persona involved
+        stage1=[reply_data],        # The reply content formatted like a stage 1 response
+        stage2=[],
+        stage3=None                 # No synthesis for direct replies
+    )
+    
+    return reply_data
 
 
 if __name__ == "__main__":
